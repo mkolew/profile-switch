@@ -129,38 +129,28 @@ func folders(app: SupportedApp, profile: String, home: URL) -> [URL] {
         .filter { FileManager.default.fileExists(atPath: $0.path) }
 }
 
-/// Works out which running instance sits behind which Dock icon of an app.
+/// Where a profile's launcher app lives: a tiny app with its own Dock icon that turns into the real app.
+/// - Returns: for example `~/Applications/Profile Switch Launchers/Claude Action.app`.
+func launcherURL(app: SupportedApp, profile: String, home: URL) -> URL {
+    home.appendingPathComponent("Applications/Profile Switch Launchers/\(app.name) \(profile.capitalized).app")
+}
+
+/// Quotes a value for use as one word in a shell script.
+private func shellQuoted(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+/// The launcher's program: a script that sets the profile's environment and replaces itself with the real app.
 ///
-/// The Dock doesn't say, so this follows its habits: an instance takes the app's pinned icon when that icon is free,
-/// otherwise it gets an extra icon after the ones already there. What the Dock shows corrects the guess where it can.
-struct DockBinding: Equatable {
-    /// The instance on the pinned icon, if any.
-    private(set) var pinnedOwner: Int32?
-    /// The instances on extra icons, in Dock order.
-    private(set) var extras: [Int32] = []
-    private var isSeeded = false
-
-    /// Brings the guess up to date.
-    /// - Parameters:
-    ///   - running: the app's instances, oldest first.
-    ///   - pinnedIconRunning: whether the app's pinned icon shows as running; false when the app isn't pinned.
-    mutating func update(running: [Int32], pinnedIconRunning: Bool) {
-        if let owner = pinnedOwner, !running.contains(owner) { pinnedOwner = nil }
-        extras.removeAll { !running.contains($0) }
-        for pid in running where pid != pinnedOwner && !extras.contains(pid) { extras.append(pid) }
-        if pinnedIconRunning, pinnedOwner == nil, !extras.isEmpty {
-            // On the first look the oldest instance is taken to hold the pinned icon; later, the one that just started.
-            pinnedOwner = isSeeded ? extras.removeLast() : extras.removeFirst()
-        }
-        if !pinnedIconRunning, let owner = pinnedOwner {
-            extras.insert(owner, at: 0)
-            pinnedOwner = nil
-        }
-        isSeeded = true
-    }
-
-    /// The instances in the order of their Dock icons.
-    var order: [Int32] { (pinnedOwner.map { [$0] } ?? []) + extras }
+/// Because the script becomes the app instead of starting it, the Dock keeps showing the launcher's icon for it.
+/// - Parameters:
+///   - executable: the real app's main program.
+///   - plan: the arguments and environment of the profile.
+func launcherScript(executable: URL, plan: LaunchPlan) -> String {
+    let exports = plan.environment.sorted { $0.key < $1.key }.map { "export \($0.key)=\(shellQuoted($0.value))\n" }.joined()
+    let words = ([executable.path] + plan.arguments).map(shellQuoted).joined(separator: " ")
+    // The version line makes existing launchers count as out of date when their look or layout changes.
+    return "#!/bin/bash\n# Profile Switch launcher, version 3\n\(exports)exec \(words) \"$@\"\n"
 }
 
 /// Checks the pure logic against a throwaway home folder; stops the program on the first failure.
@@ -199,16 +189,8 @@ func selfTest() {
     precondition(folders(app: app, profile: "default", home: home).isEmpty, "the default profile is never deleted")
     precondition(folders(app: app, profile: "../x", home: home).isEmpty)
 
-    var dock = DockBinding()
-    dock.update(running: [10, 20], pinnedIconRunning: true)
-    precondition(dock.order == [10, 20], "first look: the oldest instance holds the pinned icon")
-    dock.update(running: [20], pinnedIconRunning: false)
-    precondition(dock.order == [20], "the pinned icon is free once its instance quits")
-    dock.update(running: [20, 30], pinnedIconRunning: false)
-    dock.update(running: [20, 30], pinnedIconRunning: true)
-    precondition(dock.order == [30, 20], "a new instance takes the free pinned icon, even if the Dock shows it a tick later")
-    var unpinned = DockBinding()
-    unpinned.update(running: [10, 20], pinnedIconRunning: false)
-    precondition(unpinned.order == [10, 20], "without a pinned icon the icons follow start order")
+    let script = launcherScript(executable: URL(fileURLWithPath: "/Applications/It's.app/Contents/MacOS/App"), plan: work)
+    precondition(script == "#!/bin/bash\n# Profile Switch launcher, version 3\nexport CLAUDE_CONFIG_DIR='\(home.path)/.claude-work'\nexec '/Applications/It'\\''s.app/Contents/MacOS/App' '--user-data-dir=\(support.path)/Claude-Work' \"$@\"\n", "paths are quoted, an apostrophe included")
+    precondition(launcherURL(app: app, profile: "work", home: home).lastPathComponent == "Claude Work.app")
     print("self-test passed")
 }

@@ -18,7 +18,8 @@ echo "built $APP"
 if [ "${1:-}" = "install" ]; then
   # ~/Applications: writable without admin rights, and macOS doesn't guard it the way it guards /Applications.
   DEST="$HOME/Applications"
-  pkill -x "Profile Switch" || true
+  # Waits for the running copy to be gone: opening the app while it is still quitting fails.
+  pkill -x "Profile Switch" && while pgrep -xq "Profile Switch"; do sleep 0.2; done || true
   mkdir -p "$DEST"
   rm -rf "$DEST/Profile Switch.app"
   cp -R "$APP" "$DEST/"

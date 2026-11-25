@@ -54,12 +54,16 @@ func open(app: SupportedApp, profile: String, done: @escaping (String?) -> Void)
         focus(pid: pid)
         return done(nil)
     }
-    let plan = launchPlan(app: app, profile: profile, home: home)
     let configuration = NSWorkspace.OpenConfiguration()
-    configuration.createsNewApplicationInstance = true
-    configuration.arguments = plan.arguments
-    configuration.environment = plan.environment
-    NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+    var target = url
+    if profile == defaultProfile {
+        // A new instance on purpose: macOS counts the other profiles as this same app and would only activate one.
+        configuration.createsNewApplicationInstance = true
+    } else {
+        // Every other profile starts through its launcher, which gives it a Dock icon of its own.
+        do { target = try ensureLauncher(app: app, profile: profile) } catch { return done(error.localizedDescription) }
+    }
+    NSWorkspace.shared.openApplication(at: target, configuration: configuration) { _, error in
         done(error?.localizedDescription)
     }
 }
@@ -77,16 +81,8 @@ final class Choice: NSObject {
 /// The menu bar item and its menu, rebuilt each time it opens.
 final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let dockTags = DockTags()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        dockTags.setOn(UserDefaults.standard.bool(forKey: "showDockTags"))
-        // A profile's process is only known once it runs, so the tags look again when any app starts or quits.
-        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
-            NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [dockTags] _ in
-                dockTags.refreshOwners()
-            }
-        }
         // Starting at login is on by default: turned on once, on the first launch, and then left to the setting.
         if !UserDefaults.standard.bool(forKey: "didSetUpLoginItem") {
             UserDefaults.standard.set(true, forKey: "didSetUpLoginItem")
@@ -100,7 +96,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        dockTags.refreshOwners()
         let installed = supportedApps.filter { installedURL(of: $0) != nil }
         if installed.isEmpty {
             menu.addItem(withTitle: "No supported app is installed", action: nil, keyEquivalent: "")
@@ -112,6 +107,8 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.sectionHeader(title: app.name))
             let processes = mainProcesses(of: app)
             for profile in discover(app: app, home: home) {
+                // Keeps every launcher present and current, so it can be pinned or found in Spotlight before first use.
+                if profile != defaultProfile { _ = try? ensureLauncher(app: app, profile: profile) }
                 let isRunning = runningPid(app: app, profile: profile, home: home, processes: processes) != nil
                 add("\(isRunning ? "●" : "○") \(profile.capitalized)", #selector(choose(_:)), Choice(app: app, profile: profile), to: menu)
             }
@@ -130,9 +127,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let login = settings.addItem(withTitle: "Start at login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        let showTags = settings.addItem(withTitle: "Show Dock tags", action: #selector(toggleDockTags(_:)), keyEquivalent: "")
-        showTags.target = self
-        showTags.state = UserDefaults.standard.bool(forKey: "showDockTags") ? .on : .off
         menu.addItem(withTitle: "Settings", action: nil, keyEquivalent: "").submenu = settings
         menu.addItem(withTitle: "Quit Profile Switch", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     }
@@ -187,7 +181,9 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if runningPid(app: choice.app, profile: choice.profile, home: home, processes: mainProcesses(of: choice.app)) != nil {
             return warn("\(name) is running. Quit it first, then delete it.")
         }
+        let launcher = launcherURL(app: choice.app, profile: choice.profile, home: home)
         let doomed = folders(app: choice.app, profile: choice.profile, home: home)
+            + (FileManager.default.fileExists(atPath: launcher.path) ? [launcher] : [])
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Delete the \(name) profile?"
@@ -202,14 +198,6 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             warn("Couldn't delete the profile. \(error.localizedDescription)")
         }
-    }
-
-    @objc private func toggleDockTags(_ sender: NSMenuItem) {
-        let isOn = !UserDefaults.standard.bool(forKey: "showDockTags")
-        UserDefaults.standard.set(isOn, forKey: "showDockTags")
-        dockTags.setOn(isOn)
-        // Reading the Dock's icons takes the Accessibility permission; this shows macOS's own prompt when it's missing.
-        if isOn { AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) }
     }
 
     @objc private func toggleLogin(_ sender: NSMenuItem) {
@@ -244,7 +232,7 @@ extension NSMenuItem {
 
 // Flags for checking the app from a terminal, without the menu.
 let arguments = CommandLine.arguments.dropFirst()
-switch arguments.first(where: { $0 != "--no-apps" && $0 != "--debug-dock" }) {
+switch arguments.first(where: { $0 != "--no-apps" }) {
 case "--self-test":
     selfTest()
 case "--list":
@@ -252,6 +240,7 @@ case "--list":
         guard installedURL(of: app) != nil else { print("\(app.name): not installed"); continue }
         let processes = mainProcesses(of: app)
         for profile in discover(app: app, home: home) {
+            if profile != defaultProfile { _ = try? ensureLauncher(app: app, profile: profile) }
             let pid = runningPid(app: app, profile: profile, home: home, processes: processes)
             print("\(app.name)\t\(profile)\t\(pid.map { "running pid \($0)" } ?? "not running")")
         }

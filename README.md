@@ -22,7 +22,6 @@ Not affiliated with, endorsed or sponsored by Anthropic. Claude is a trademark o
 - **Delete profile** lists the profiles you added. After you confirm, the profile's folders move to the Trash. Quit the profile first; the default profile can't be deleted.
 - If the app isn't installed, the menu offers a download link instead.
 - **Settings → Start at login** is on by default; untick it to stop Profile Switch starting when you log in.
-- **Settings → Show Dock tags** puts a small coloured name tag on the Dock icon of every running profile, so you can tell the identical icons apart. Off by default; turning it on asks for the Accessibility permission, which is how macOS lets an app see where the Dock's icons are.
 
 ## Profiles
 
@@ -40,6 +39,16 @@ A profile is started like this, which you can also run by hand:
 ```bash
 open -n -a /Applications/Claude.app --env CLAUDE_CONFIG_DIR="$HOME/.claude-work" --args --user-data-dir="$HOME/Library/Application Support/Claude-work"
 ```
+
+## Launchers and the Dock
+
+Every profile you add gets a launcher: a tiny app in `~/Applications/Profile Switch Launchers`, for example `Claude Work.app`. Its icon is the app's own icon with the profile's name on a coloured band.
+
+- Profile Switch starts a profile through its launcher, so in the Dock the running profile shows the launcher's icon, not a second copy of the app's icon.
+- Right-click that icon and choose Options → Keep in Dock. The same icon is then reused every time, and clicking it starts the profile directly.
+- Launchers also show up in Spotlight under their name.
+
+A launcher contains no copy of the app. It is a few lines of script that replace themselves with the real, unmodified app, so the profile always runs the installed version and updates with it. Profile Switch rewrites a launcher when the app has moved.
 
 ## Build and install
 
@@ -69,9 +78,7 @@ pkill -x "Profile Switch"; open ~/Applications/"Profile Switch.app" --args --no-
 
 ## Limits
 
-- Every running instance shows the app's own icon in the Dock. macOS takes the icon from the app, all profiles run the same app, and macOS doesn't let one app hide another app's Dock icon.
-- Dock tags are matched to instances by the order they started in, because the Dock doesn't say which instance an icon belongs to. When the icons and instances can't be paired one to one, no tags are shown. The tags are checked five times a second, so they trail when the Dock magnifies or rearranges.
-- The app is signed locally, so macOS may ask for the Accessibility permission again after each rebuild.
+- The default profile keeps the app's own Dock icon. macOS doesn't let one app change or hide another app's Dock icon; the launchers are how the other profiles get theirs.
 - Signing in opens your browser. If the browser is already signed in to another account, a new profile can end up on that account: use a private window, or sign out in the browser first.
 - No command to rename a profile.
 - Only the Claude desktop app is supported. The app list is one table in `Sources/Profiles.swift`; another app needs a row there and a check that it honours `--user-data-dir`.
