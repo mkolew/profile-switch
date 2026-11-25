@@ -32,7 +32,7 @@ A profile is a pair of folders. Profiles share nothing: each has its own login, 
 | `Default` | `~/.claude`        | `~/Library/Application Support/Claude`        |
 | `<name>`  | `~/.claude-<name>` | `~/Library/Application Support/Claude-<name>` |
 
-`Default` is the app as you already use it. Any `~/.claude-<name>` folder that Claude Code has used, or that this app created, shows up as a profile. Names take lowercase letters, digits and dashes.
+`Default` is the app as you already use it. Any `~/.claude-<name>` folder that Claude Code has used, or that this app created, shows up as a profile. A new profile's name takes only the letters a to z and digits, at most 12 characters; it is stored in lowercase.
 
 A profile is started like this, which you can also run by hand:
 

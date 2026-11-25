@@ -154,7 +154,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         let alert = NSAlert()
         alert.messageText = "New \(app.name) profile"
-        alert.informativeText = "Name it after the subscription, for example Personal. It starts empty: log in with that subscription in the window that opens."
+        alert.informativeText = "Name it after the subscription, for example Personal: letters and digits only, at most \(maxProfileNameLength) characters. It starts empty: log in with that subscription in the window that opens."
         alert.accessoryView = field
         alert.addButton(withTitle: "Create")
         alert.addButton(withTitle: "Cancel")
@@ -162,7 +162,7 @@ final class Controller: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         guard let profile = slug(field.stringValue) else {
-            return warn("Use letters, digits and dashes for the name. \"Default\" is taken.")
+            return warn("Use only the letters a to z and digits, at most \(maxProfileNameLength) characters, with no spaces. \"Default\" is taken.")
         }
         do {
             if !discover(app: app, home: home).contains(profile) {

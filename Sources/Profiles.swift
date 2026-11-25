@@ -42,14 +42,23 @@ struct LaunchPlan: Equatable {
     var environment: [String: String] = [:]
 }
 
-/// Turns a typed name into a profile name.
-/// - Parameter typed: what the person entered, for example `Personal` or `my client`.
-/// - Returns: lowercase letters, digits and dashes, or nil when nothing valid is left or the name is taken by the default profile.
+/// The longest name a new profile may have; a longer one no longer reads on a Dock icon.
+let maxProfileNameLength = 12
+
+/// Turns a typed name into the name of a new profile.
+/// - Parameter typed: what the person entered, for example `Personal`.
+/// - Returns: the name in lowercase, or nil when it has anything but the letters a to z and digits, is longer than
+///   `maxProfileNameLength`, or is taken by the default profile.
 func slug(_ typed: String) -> String? {
     let name = typed.trimmingCharacters(in: .whitespaces).lowercased()
-        .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: "_", with: "-")
-    let isValid = name.range(of: "^[a-z0-9][a-z0-9-]*$", options: .regularExpression) != nil
+    let isValid = name.range(of: "^[a-z0-9]{1,\(maxProfileNameLength)}$", options: .regularExpression) != nil
     return isValid && name != defaultProfile ? name : nil
+}
+
+/// Whether a name can be an existing profile's. Looser than `slug`, so folders made by hand or by earlier
+/// versions, which allowed dashes and longer names, still show up.
+private func isStoredName(_ name: String) -> Bool {
+    name != defaultProfile && name.range(of: "^[a-z0-9][a-z0-9-]*$", options: .regularExpression) != nil
 }
 
 /// The folder in the home folder that marks a profile: the config folder when the app has one, else the data folder.
@@ -69,9 +78,8 @@ func discover(app: SupportedApp, home: URL) -> [String] {
     let files = FileManager.default
     let names = (try? files.contentsOfDirectory(atPath: parent.path)) ?? []
     let found = names.sorted().compactMap { folder -> String? in
-        guard folder.hasPrefix(prefix), let name = slug(String(folder.dropFirst(prefix.count))),
-              prefix + name == folder
-        else { return nil }
+        let name = String(folder.dropFirst(prefix.count))
+        guard folder.hasPrefix(prefix), isStoredName(name) else { return nil }
         let inside = parent.appendingPathComponent(folder)
         let evidence = [markerFile] + (app.config.map { [$0.usedFile] } ?? [])
         return evidence.contains { files.fileExists(atPath: inside.appendingPathComponent($0).path) } ? name : nil
@@ -123,7 +131,7 @@ func createProfile(app: SupportedApp, profile: String, home: URL) throws {
 /// The folders that make up a profile and exist on disk: its config folder, when the app has one, and its data folder.
 /// - Returns: nothing for the default profile, which is the app's own setup and never ours to remove.
 func folders(app: SupportedApp, profile: String, home: URL) -> [URL] {
-    guard profile != defaultProfile, slug(profile) == profile else { return [] }
+    guard isStoredName(profile) else { return [] }
     let config = app.config.map { home.appendingPathComponent("\($0.folder)-\(profile)") }
     return [config, dataFolder(app: app, profile: profile, home: home)].compactMap { $0 }
         .filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -165,8 +173,14 @@ func selfTest() {
     }
     try! Data().write(to: home.appendingPathComponent(".claude-work/.claude.json"))
 
-    precondition(slug(" My Client ") == "my-client")
+    precondition(slug(" Personal2 ") == "personal2")
     precondition(slug("Default") == nil && slug("a/b") == nil && slug("") == nil)
+    precondition(slug("my client") == nil && slug("my-client") == nil && slug("café") == nil, "only a to z and digits")
+    precondition(slug("abcdefghijkl") != nil && slug("abcdefghijklm") == nil, "at most 12 characters")
+    try! files.createDirectory(at: home.appendingPathComponent(".claude-old-name"), withIntermediateDirectories: true)
+    try! Data().write(to: home.appendingPathComponent(".claude-old-name/.claude.json"))
+    precondition(discover(app: app, home: home) == ["default", "old-name", "work"], "an existing name with a dash still shows up")
+    try! files.removeItem(at: home.appendingPathComponent(".claude-old-name"))
     precondition(discover(app: app, home: home) == ["default", "work"], "a used folder is a profile, another tool's is not")
 
     try! createProfile(app: app, profile: "personal", home: home)
